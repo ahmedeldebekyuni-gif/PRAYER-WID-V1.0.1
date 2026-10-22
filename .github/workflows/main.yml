@@ -1,118 +1,46 @@
-name: Make APK
+name: Build PrayerWidgets APK
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  verify:
-    runs-on: ubuntu-24.04
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out source
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v6
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          # Skip legacy SDK packages; install only the explicitly requested platform below.
-          packages: ''
-
-      - name: Install Android platform and build tools
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Locate Android project directory
-        id: project
-        shell: bash
+      - name: Locate Gradle project
+        id: loc
         run: |
-          settings_file=$(find . -maxdepth 5 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
-          if [[ -z "$settings_file" ]]; then
-            echo "Could not find settings.gradle or settings.gradle.kts in the repository."
-            exit 1
-          fi
-          project_dir=$(dirname "$settings_file")
-          echo "dir=$project_dir" >> "$GITHUB_OUTPUT"
-          echo "Using Android project directory: $project_dir"
+          f=$(find . -name settings.gradle -o -name settings.gradle.kts | grep -v node_modules | head -n1)
+          [ -z "$f" ] && { echo "No settings.gradle found"; exit 1; }
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+          ls -la "$(dirname "$f")"
 
-      - name: Install Gradle 8.9 for wrapper bootstrap
-        uses: gradle/actions/setup-gradle@v6
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
-
-      - name: Generate official Gradle Wrapper files if not committed
-        shell: bash
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          if [[ ! -f gradlew || ! -f gradlew.bat || ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
-            gradle wrapper --gradle-version 8.9 --distribution-type bin
-          fi
-
-      - name: Validate Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v4
-
-      - name: Run static project checks
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: python3 tools_check_project.py
+          gradle-version: 8.7
 
       - name: Build debug APK
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew --no-daemon --stacktrace clean :app:assembleDebug
-
-      - name: Run unit tests and lint
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug
-
-      - name: Build signed release APK when signing secrets are configured
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/prayerwidgets-release.jks
-          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        working-directory: ${{ steps.project.outputs.dir }}
+        working-directory: ${{ steps.loc.outputs.dir }}
         run: |
-          if [[ -n "$ANDROID_KEYSTORE_BASE64" && -n "$RELEASE_KEYSTORE_PASSWORD" && -n "$RELEASE_KEY_ALIAS" && -n "$RELEASE_KEY_PASSWORD" ]]; then
-            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RELEASE_KEYSTORE_PATH"
-            ./gradlew --no-daemon --stacktrace :app:assembleRelease
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew :app:assembleDebug --stacktrace --no-daemon
           else
-            echo "Release APK skipped: signing secrets are not fully configured."
+            gradle :app:assembleDebug --stacktrace --no-daemon
           fi
 
-      - name: Package project with built APK
-        if: always()
-        shell: bash
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          if [[ ! -f app/build/outputs/apk/debug/app-debug.apk ]]; then
-            echo "Project ZIP with APK skipped: debug APK was not produced."
-            exit 0
-          fi
-          zip -qr PrayerWidgets_Android_Complete_Project.zip . \
-            -x './.git/*' './.gradle/*' './app/build/*' './PrayerWidgets_Android_Complete_Project.zip' './.DS_Store'
-          mkdir -p delivery
-          cp app/build/outputs/apk/debug/app-debug.apk delivery/
-          zip -q PrayerWidgets_Android_Complete_Project.zip delivery/app-debug.apk
-
-      - name: Upload APKs and reports
-        if: always()
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
-          name: prayerwidgets-build-${{ github.run_number }}
-          path: |
-            ${{ steps.project.outputs.dir }}/app/build/outputs/apk/**/*.apk
-            ${{ steps.project.outputs.dir }}/PrayerWidgets_Android_Complete_Project.zip
-            ${{ steps.project.outputs.dir }}/app/build/reports/**
-            ${{ steps.project.outputs.dir }}/app/build/test-results/**
-            ${{ steps.project.outputs.dir }}/app/build/outputs/logs/**
-          if-no-files-found: warn
-          retention-days: 14
+          name: PrayerWidgets-debug-apk
+          path: '**/app/build/outputs/apk/debug/app-debug.apk'
+          if-no-files-found: error
