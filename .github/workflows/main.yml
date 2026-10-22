@@ -31,7 +31,7 @@ jobs:
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install Gradle 8.9 for wrapper bootstrap
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
 
@@ -48,8 +48,11 @@ jobs:
       - name: Run static project checks
         run: python3 tools_check_project.py
 
-      - name: Run unit tests, lint, and debug APK build
-        run: ./gradlew --no-daemon --stacktrace clean :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Build debug APK
+        run: ./gradlew --no-daemon --stacktrace clean :app:assembleDebug
+
+      - name: Run unit tests and lint
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug
 
       - name: Build signed release APK when signing secrets are configured
         env:
